@@ -1,57 +1,57 @@
 import express from 'express';
-import { Product, Order, OrderItem, User } from '../models/index.js';
+import { Product, Order, OrderItem, User, ProductVariant } from '../models/index.js';
 
 const router = express.Router();
 
 router.get("/history", async (req, res) => {
     try {
-
         if (!req.session || !req.session.user) {
             return res.status(401).json({ message: "Neautorizat. Te rugăm să te autentifici." });
         }
 
         const userId = req.session.user.id;
 
-        let user = await User.findOne({ where: { id: userId } })
+        const user = await User.findByPk(userId);
 
         if (!user) {
-            return res.status(400).json({ error: "User not found" })
+            return res.status(400).json({ error: "User not found" });
         }
 
-        let userOrders = await Order.findAll({ where: { userId } }) || [];
-        let ordersWithItems = [];
-
-        if (userOrders.length > 0) {
-            for (let order of userOrders) {
-                let plainOrder = order.get({ plain: true });
-
-                let orderItems = await OrderItem.findAll({ where: { orderId: order.id } });
-                let detailedItems = [];
-                
-                for (let item of orderItems) {
-                    let plainItem = item.get({ plain: true });
-                    let productItem = await Product.findOne({ where: { id: plainItem.productId } });
-                    
-                    detailedItems.push({
-                        ...plainItem,
-                        product: productItem ? productItem.get({ plain: true }) : null
-                    });
+        const userOrders = await Order.findAll({
+            where: { userId },
+            order: [['createdAt', 'DESC']],
+            include: [
+                {
+                    model: OrderItem,
+                    as: 'items',
+                    include: [
+                        {
+                            model: Product 
+                        },
+                        {
+                            model: ProductVariant
+                        }
+                    ]
                 }
-
-                plainOrder.items = detailedItems;
-                ordersWithItems.push(plainOrder);
-            }
-        }
+            ]
+        });
 
         const userToReturn = {
             userInfo: user,
-            userHistory: ordersWithItems
-        }
+            userHistory: userOrders
+        };
 
-        res.status(200).json({ message: "User info fetched successfully", data: userToReturn })
+        return res.status(200).json({ 
+            message: "User info fetched successfully", 
+            data: userToReturn 
+        });
 
     } catch (error) {
-        res.status(400).json({ error: "Internal Server Error" })
+        console.error("Error fetching history:", error);
+        return res.status(500).json({ 
+            error: "Internal Server Error", 
+            details: error.message 
+        });
     }
 });
 

@@ -1,15 +1,22 @@
 import express from 'express';
 import { sequelize } from '../config/db.js';
-import { Product, Order, OrderItem, Voucher, UserVoucher } from '../models/index.js'; 
+import { Order, OrderItem, Voucher, UserVoucher, ProductVariant } from '../models/index.js'; 
 
 const router = express.Router();
 
 
 router.post("/", async (req, res) => {
-    const transaction = await sequelize.transaction();
+    let transaction;
 
     try {
+        transaction = await sequelize.transaction();
+
         const sessionUserId = req.session?.user?.id || null;
+
+        if (!sessionUserId) {
+            await transaction.rollback();
+            return res.status(401).json({ error: "Nu ești autentificat." });
+        }
         
         const { totalSum, billingAddress, shippingAddress, items, voucherId } = req.body;
 
@@ -49,39 +56,6 @@ router.post("/", async (req, res) => {
             calculatedTotal = Math.max(0, calculatedTotal);
         }
 
-        const orderItemsToCreate = [];
-
-        for (const item of items) {
-            const star = item.starDetails || {};
-
-            const [product] = await Product.findOrCreate({
-                where: { name: star.name || item.name || 'Stea Unică' },
-                defaults: {
-                    name: star.name || item.name || 'Stea Unică',
-                    description: `Steaua ${star.name || item.name || ''}`, 
-                    price: item.price || 20000,
-                    stock: 1,
-                    constellation: star.constellation || null,
-                    rightAscension: star.right_ascension || null,
-                    declination: star.declination || null,
-                    apparentMagnitude: star.apparent_magnitude || null,
-                    absoluteMagnitude: star.absolute_magnitude || null,
-                    distanceLightYear: star.distance_light_year || null,
-                    spectralClass: star.spectral_class || null
-                },
-                transaction
-            });
-
-            const qty = item.quantity || 1;
-            const itemPrice = item.price || product.price || 20000;
-
-            orderItemsToCreate.push({
-                productId: product.id,
-                quantity: qty,
-                priceAtPurchase: itemPrice
-            });
-        }
-
         const formatAddress = (addr) => {
             if (!addr) return '';
             return typeof addr === 'object' ? JSON.stringify(addr) : String(addr);
@@ -95,12 +69,33 @@ router.post("/", async (req, res) => {
             status: 'pending'
         }, { transaction });
 
-        const itemsWithOrderId = orderItemsToCreate.map(item => ({
-            orderId: newOrder.id,
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.priceAtPurchase
-        }));
+        const itemsWithOrderId = [];
+
+        for (const item of items) {
+            const pId = item.productId || item.id;
+            const vId = item.variantId || item.variant?.id || null;
+
+            if (!pId) {
+                await transaction.rollback();
+                return res.status(400).json({ error: "Fiecare produs din coș trebuie să aibă un productId valid." });
+            }
+
+            if (vId) {
+                const variantExists = await ProductVariant.findByPk(vId, { transaction });
+                if (!variantExists) {
+                    await transaction.rollback();
+                    return res.status(400).json({ error: `Varianta cu ID-ul ${vId} nu există.` });
+                }
+            }
+
+            itemsWithOrderId.push({
+                orderId: newOrder.id,
+                productId: pId,
+                variantId: vId, 
+                quantity: item.quantity || 1,
+                price: Number(item.price) || 0
+            });
+        }
 
         await OrderItem.bulkCreate(itemsWithOrderId, { transaction });
 
@@ -123,8 +118,9 @@ router.post("/", async (req, res) => {
         });
 
     } catch (error) {
-        await transaction.rollback();
-        console.error("ORDER CREATION ERROR:", error);
+        if (transaction) {
+            await transaction.rollback();
+        }
 
         return res.status(500).json({ 
             error: "Internal Server Error",

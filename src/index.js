@@ -3,7 +3,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { connectDB} from './config/db.js';
 import { sequelize } from './models/index.js';
-import starsRouter from './routes/stars.js';
+import productsRouter from './routes/products.js';
 import ordersRouter from './routes/orders.js';
 import authRouter from './routes/auth.js';
 import userRouter from './routes/user.js';
@@ -21,13 +21,12 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-
 app.use(cors({
-  origin: 'https://stellsi.onrender.com',
+  origin: 'http://localhost:5173',
   credentials: true
 }));
 
-// this creates a session table in ur database automatocally
+
 const SequelizeStore = connectSessionSequelize(session.Store);
 
 const sessionStore = new SequelizeStore({
@@ -37,7 +36,7 @@ const sessionStore = new SequelizeStore({
   expiration: 24 * 60 * 60 * 1000
 });
 
-app.set('trust proxy', 1);
+// app.set('trust proxy', 1);
 
 app.use(
   session({
@@ -47,14 +46,15 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true, 
-      secure: true,
-      sameSite: 'none',
+      secure: false, 
+      // TODO,SET TO FALSE FOR PRODUCTION
+      sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 24 
     }
   })
 );
 
-  app.use('/api/stars', starsRouter);
+  app.use('/api/products', productsRouter);
   app.use('/api/order', ordersRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/user', userRouter);
